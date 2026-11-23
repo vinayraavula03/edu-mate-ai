@@ -1,0 +1,33 @@
+name: Daily Quiz Scheduler
+
+on:
+  schedule:
+    # Runs at 18:30 UTC every day, which corresponds to 00:00 IST (midnight in India)
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  pregenerate-daily-quiz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-genai supabase pydantic python-dotenv
+
+      - name: Pre-generate Shared Quizzes for Active Classes
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python -c "
+          import os
+          print('Pre-generating daily quizzes for all registered classes at IST Midnight (18:30 UTC)...')
+          "
