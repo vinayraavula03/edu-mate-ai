@@ -564,3 +564,36 @@ def remove_student_from_class(class_id: str, user_id: str, authorization: Option
         if not (m["class_id"] == class_id and m["user_id"] == user_id)
     ]
     return {"message": "Student removed successfully"}
+
+@router.delete("/{class_id}")
+def delete_class_endpoint(class_id: str, authorization: Optional[str] = Header(None)):
+    """Teacher permanently deletes a class and its associated data."""
+    user = get_current_user_or_default(authorization)
+    uid = user["id"]
+
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("classes").select("id, name, teacher_id").eq("id", class_id).execute()
+            if not res.data:
+                raise HTTPException(status_code=404, detail="Class not found")
+            cls = res.data[0]
+            if cls["teacher_id"] != uid and user.get("role") != "teacher":
+                raise HTTPException(status_code=403, detail="Only the teacher of this class can delete it.")
+
+            client.table("classes").delete().eq("id", class_id).execute()
+            return {"message": f"Class '{cls['name']}' deleted successfully"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Error deleting class from Supabase: {e}")
+
+    # Local fallback
+    if class_id in local_db.classes:
+        name = local_db.classes[class_id].get("name", "Class")
+        del local_db.classes[class_id]
+        local_db.class_members = [m for m in local_db.class_members if m["class_id"] != class_id]
+        local_db.quiz_attempts = [a for a in local_db.quiz_attempts if a["class_id"] != class_id]
+        return {"message": f"Class '{name}' deleted successfully"}
+
+    raise HTTPException(status_code=404, detail="Class not found")

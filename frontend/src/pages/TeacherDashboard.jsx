@@ -10,6 +10,7 @@ import {
   setClassAnnouncement,
   deleteClassAnnouncement,
   createCustomDailyQuiz,
+  deleteClass,
 } from '../api/client';
 import {
   Plus,
@@ -185,6 +186,26 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
       setMsg(`Student ${name} removed.`);
     } catch {
       alert('Failed to remove student.');
+    }
+  }
+
+  async function handleDeleteClass() {
+    if (!currentClass) return;
+    const confirmed = confirm(
+      `⚠️ ARE YOU SURE you want to delete class "${currentClass.name}"?\n\n` +
+      `All enrolled students, quiz submissions, and leaderboards for this class will be permanently removed.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteClass(currentClass.id, token);
+      setMsg(`Class "${currentClass.name}" deleted successfully.`);
+      setCurrentClass(null);
+      setActiveClass(null);
+      setClassDetails(null);
+      loadClasses();
+    } catch (err) {
+      alert(err.message || 'Failed to delete class.');
     }
   }
 
@@ -484,20 +505,28 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
             </div>
 
             {/* Quick Actions */}
-            <div className="flex items-center justify-between md:justify-end gap-3 flex-wrap">
+            <div className="flex items-center justify-between md:justify-end gap-2.5 flex-wrap">
               <button
                 onClick={onGoToInsights}
-                className="px-4 py-2.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 font-bold text-xs hover:bg-rose-100 transition-colors cursor-pointer flex items-center gap-1.5"
+                className="px-3.5 py-2.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 font-bold text-xs hover:bg-rose-100 transition-colors cursor-pointer flex items-center gap-1.5"
               >
-                <span>Weak-Topic Insights</span>
+                <span>Weak Topics</span>
                 <span>🔍</span>
               </button>
               <button
                 onClick={onGoToLeaderboard}
-                className="px-4 py-2.5 rounded-xl border border-purple-200 bg-purple-50 text-purple-700 font-bold text-xs hover:bg-purple-100 transition-colors cursor-pointer flex items-center gap-1.5"
+                className="px-3.5 py-2.5 rounded-xl border border-purple-200 bg-purple-50 text-purple-700 font-bold text-xs hover:bg-purple-100 transition-colors cursor-pointer flex items-center gap-1.5"
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                <span>Class Leaderboard</span>
+                <span>Leaderboard</span>
+              </button>
+              <button
+                onClick={handleDeleteClass}
+                className="px-3 py-2.5 rounded-xl border border-slate-200 hover:border-rose-300 bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                title="Permanently delete this classroom"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                <span>Delete</span>
               </button>
             </div>
           </div>

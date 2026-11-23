@@ -72,6 +72,16 @@ export async function removeStudentFromClass(classId, userId, token) {
   return res.json();
 }
 
+export async function deleteClass(classId, token) {
+  const res = await fetch(`${API_BASE}/classes/${classId}`, {
+    method: 'DELETE',
+    headers: getHeaders(token),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || 'Failed to delete class');
+  return data;
+}
+
 export async function fetchTodayQuiz(classId, token) {
   const res = await fetch(`${API_BASE}/quiz/today?class_id=${classId}`, {
     headers: getHeaders(token),
