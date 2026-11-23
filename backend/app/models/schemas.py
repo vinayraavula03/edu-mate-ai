@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 # --- Quiz Schemas ---
@@ -78,12 +78,26 @@ class ClassResponse(BaseModel):
 class ClassJoinRequest(BaseModel):
     join_code: str = Field(..., min_length=4, max_length=10)
 
+class StudentQuizHistoryItem(BaseModel):
+    quiz_id: str
+    quiz_date: Optional[str] = None
+    score: int
+    total: int
+    points: int
+    accuracy: float
+    created_at: str
+
 class StudentMember(BaseModel):
     user_id: str
     display_name: str
+    email: Optional[str] = None
     joined_at: str
     completed_today: bool = False
     today_score: Optional[int] = None
+    total_points: int = 0
+    accuracy: float = 0.0
+    quizzes_completed: int = 0
+    history: List[StudentQuizHistoryItem] = []
 
 class ClassDetailResponse(BaseModel):
     id: str
@@ -94,6 +108,8 @@ class ClassDetailResponse(BaseModel):
     students: List[StudentMember] = []
     today_quiz_topic: Optional[str] = None
     today_quiz_completed_count: int = 0
+    today_quiz_questions: List[Dict[str, Any]] = []
+    average_accuracy: float = 0.0
 
 # --- Leaderboard Schemas ---
 

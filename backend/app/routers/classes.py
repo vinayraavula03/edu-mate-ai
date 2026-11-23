@@ -1,8 +1,10 @@
+import logging
 import random
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Response
 
 from backend.app.models.schemas import (
     ClassCreateRequest,
@@ -10,6 +12,7 @@ from backend.app.models.schemas import (
     ClassJoinRequest,
     ClassDetailResponse,
     StudentMember,
+    StudentQuizHistoryItem,
 )
 from backend.app.services.supabase_client import (
     get_supabase_client,
@@ -17,6 +20,8 @@ from backend.app.services.supabase_client import (
     local_db,
 )
 from backend.app.services.streak_service import get_ist_today
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/classes", tags=["Classes"])
 
@@ -228,12 +233,13 @@ def get_my_classes(authorization: Optional[str] = Header(None)):
 
 @router.get("/{class_id}", response_model=ClassDetailResponse)
 def get_class_details(class_id: str, authorization: Optional[str] = Header(None)):
-    """Teacher views detailed class dashboard: student list and quiz completion status."""
+    """Teacher views detailed class dashboard: student list, analytics, and quiz completion status."""
     today_ist = str(get_ist_today())
     cls = local_db.classes.get(class_id)
     students_list = []
     completed_count = 0
     today_topic = "General Science"
+    today_quiz_questions = []
 
     client = get_supabase_client()
     if client:
@@ -244,38 +250,90 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
                     cls = res.data[0]
 
             if cls:
-                # 1. Fetch enrolled members with profiles
+                # 1. Fetch user emails from auth
+                email_map = {}
+                try:
+                    auth_users = client.auth.admin.list_users()
+                    email_map = {u.id: u.email for u in auth_users}
+                except Exception:
+                    pass
+
+                # 2. Fetch enrolled members with profiles
                 m_res = client.table("class_members").select("user_id, joined_at, profiles(display_name)").eq("class_id", class_id).execute()
                 
-                # 2. Fetch today's quiz attempts
-                att_res = client.table("quiz_attempts").select("user_id, score, created_at").eq("class_id", class_id).execute()
-                today_attempts = {
-                    a["user_id"]: a
-                    for a in (att_res.data or [])
-                    if str(a.get("created_at", "")).startswith(today_ist)
-                }
+                # 3. Fetch all quiz attempts for this class
+                att_res = client.table("quiz_attempts").select("*").eq("class_id", class_id).order("created_at", desc=True).execute()
+                all_attempts = att_res.data or []
+
+                attempts_by_user = defaultdict(list)
+                for a in all_attempts:
+                    attempts_by_user[a["user_id"]].append(a)
+
+                total_accuracy_sum = 0.0
+                accuracy_sample_count = 0
 
                 for m in (m_res.data or []):
                     uid = m["user_id"]
                     profile_info = m.get("profiles") or {}
                     dname = profile_info.get("display_name") or f"Student {uid[:4]}"
-                    today_att = today_attempts.get(uid)
+                    u_email = email_map.get(uid)
+
+                    user_attempts = attempts_by_user.get(uid, [])
+                    u_points = sum(a.get("points", 0) for a in user_attempts)
+                    u_completed_count = len(user_attempts)
+                    u_acc = (
+                        round(sum(a.get("accuracy", 0.0) for a in user_attempts) / u_completed_count, 1)
+                        if u_completed_count > 0 else 0.0
+                    )
+                    if u_completed_count > 0:
+                        total_accuracy_sum += u_acc
+                        accuracy_sample_count += 1
+
+                    # Check today's attempt
+                    today_att = next(
+                        (a for a in user_attempts if str(a.get("created_at", "")).startswith(today_ist)),
+                        None
+                    )
                     completed = bool(today_att)
                     if completed:
                         completed_count += 1
 
+                    # History items
+                    history_items = [
+                        StudentQuizHistoryItem(
+                            quiz_id=a.get("quiz_id", ""),
+                            score=a.get("score", 0),
+                            total=a.get("total", 5),
+                            points=a.get("points", 0),
+                            accuracy=a.get("accuracy", 0.0),
+                            created_at=str(a.get("created_at", ""))
+                        )
+                        for a in user_attempts
+                    ]
+
                     students_list.append(StudentMember(
                         user_id=uid,
                         display_name=dname,
+                        email=u_email,
                         joined_at=str(m.get("joined_at", "")),
                         completed_today=completed,
-                        today_score=today_att.get("score") if today_att else None
+                        today_score=today_att.get("score") if today_att else None,
+                        total_points=u_points,
+                        accuracy=u_acc,
+                        quizzes_completed=u_completed_count,
+                        history=history_items
                     ))
 
-                # 3. Fetch today's quiz topic
-                q_res = client.table("daily_quizzes").select("topic").eq("class_id", class_id).eq("quiz_date", today_ist).execute()
+                # 4. Fetch today's quiz topic & questions
+                q_res = client.table("daily_quizzes").select("topic, questions_json").eq("class_id", class_id).eq("quiz_date", today_ist).execute()
                 if q_res.data:
-                    today_topic = q_res.data[0]["topic"]
+                    today_topic = q_res.data[0].get("topic", "General Science")
+                    today_quiz_questions = q_res.data[0].get("questions_json", [])
+
+                class_avg_acc = (
+                    round(total_accuracy_sum / accuracy_sample_count, 1)
+                    if accuracy_sample_count > 0 else 0.0
+                )
 
                 return ClassDetailResponse(
                     id=cls["id"],
@@ -285,7 +343,9 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
                     created_at=str(cls.get("created_at", "")),
                     students=students_list,
                     today_quiz_topic=today_topic,
-                    today_quiz_completed_count=completed_count
+                    today_quiz_completed_count=completed_count,
+                    today_quiz_questions=today_quiz_questions,
+                    average_accuracy=class_avg_acc
                 )
         except Exception as e:
             logger.warning(f"Error getting class details from Supabase: {e}")
@@ -298,24 +358,44 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
     for m in members:
         uid = m["user_id"]
         profile = local_db.profiles.get(uid, {"display_name": f"Student {uid[:4]}"})
+        u_attempts = [a for a in local_db.quiz_attempts if a["class_id"] == class_id and a["user_id"] == uid]
         today_att = next(
-            (a for a in local_db.quiz_attempts 
-             if a["class_id"] == class_id and a["user_id"] == uid and str(a.get("created_at", "")).startswith(today_ist)),
+            (a for a in u_attempts if str(a.get("created_at", "")).startswith(today_ist)),
             None
         )
         completed = bool(today_att)
         if completed:
             completed_count += 1
 
+        u_points = sum(a.get("points", 0) for a in u_attempts)
+        u_count = len(u_attempts)
+        u_acc = round(sum(a.get("accuracy", 0.0) for a in u_attempts) / u_count, 1) if u_count else 0.0
+
         students_list.append(StudentMember(
             user_id=uid,
             display_name=profile.get("display_name", f"Student {uid[:4]}"),
+            email=profile.get("email"),
             joined_at=m.get("joined_at", ""),
             completed_today=completed,
-            today_score=today_att.get("score") if today_att else None
+            today_score=today_att.get("score") if today_att else None,
+            total_points=u_points,
+            accuracy=u_acc,
+            quizzes_completed=u_count,
+            history=[
+                StudentQuizHistoryItem(
+                    quiz_id=a.get("quiz_id", ""),
+                    score=a.get("score", 0),
+                    total=a.get("total", 5),
+                    points=a.get("points", 0),
+                    accuracy=a.get("accuracy", 0.0),
+                    created_at=str(a.get("created_at", ""))
+                ) for a in u_attempts
+            ]
         ))
 
     today_topic = local_db.daily_quizzes.get(f"{class_id}_{today_ist}", {}).get("topic", "Water Cycle")
+    local_quiz = local_db.daily_quizzes.get(f"{class_id}_{today_ist}", {})
+    today_quiz_questions = local_quiz.get("questions_json", [])
 
     return ClassDetailResponse(
         id=cls["id"],
@@ -325,7 +405,29 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
         created_at=cls.get("created_at", ""),
         students=students_list,
         today_quiz_topic=today_topic,
-        today_quiz_completed_count=completed_count
+        today_quiz_completed_count=completed_count,
+        today_quiz_questions=today_quiz_questions,
+        average_accuracy=0.0
+    )
+
+@router.get("/{class_id}/export-csv")
+def export_class_csv(class_id: str, authorization: Optional[str] = Header(None)):
+    """Exports class roster and student analytics as a downloadable CSV."""
+    details = get_class_details(class_id, authorization)
+    
+    rows = ["Nickname,Email,Joined Date,Today Status,Today Score,Total Points,Quizzes Completed,Overall Accuracy %"]
+    for s in details.students:
+        status_text = "Completed" if s.completed_today else "Pending"
+        today_score_text = f"{s.today_score}/5" if s.today_score is not None else "N/A"
+        clean_email = s.email or "N/A"
+        clean_name = f'"{s.display_name}"'
+        rows.append(f"{clean_name},{clean_email},{s.joined_at[:10]},{status_text},{today_score_text},{s.total_points},{s.quizzes_completed},{s.accuracy}%")
+
+    csv_data = "\n".join(rows)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="class_{details.name.replace(" ", "_")}_report.csv"'}
     )
 
 @router.post("/{class_id}/regenerate-code")
