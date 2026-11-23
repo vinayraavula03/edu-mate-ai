@@ -231,30 +231,73 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
     """Teacher views detailed class dashboard: student list and quiz completion status."""
     today_ist = str(get_ist_today())
     cls = local_db.classes.get(class_id)
-    if not cls:
-        # Check supabase
-        client = get_supabase_client()
-        if client:
-            try:
+    students_list = []
+    completed_count = 0
+    today_topic = "General Science"
+
+    client = get_supabase_client()
+    if client:
+        try:
+            if not cls:
                 res = client.table("classes").select("*").eq("id", class_id).execute()
                 if res.data:
                     cls = res.data[0]
-            except Exception:
-                pass
 
+            if cls:
+                # 1. Fetch enrolled members with profiles
+                m_res = client.table("class_members").select("user_id, joined_at, profiles(display_name)").eq("class_id", class_id).execute()
+                
+                # 2. Fetch today's quiz attempts
+                att_res = client.table("quiz_attempts").select("user_id, score, created_at").eq("class_id", class_id).execute()
+                today_attempts = {
+                    a["user_id"]: a
+                    for a in (att_res.data or [])
+                    if str(a.get("created_at", "")).startswith(today_ist)
+                }
+
+                for m in (m_res.data or []):
+                    uid = m["user_id"]
+                    profile_info = m.get("profiles") or {}
+                    dname = profile_info.get("display_name") or f"Student {uid[:4]}"
+                    today_att = today_attempts.get(uid)
+                    completed = bool(today_att)
+                    if completed:
+                        completed_count += 1
+
+                    students_list.append(StudentMember(
+                        user_id=uid,
+                        display_name=dname,
+                        joined_at=str(m.get("joined_at", "")),
+                        completed_today=completed,
+                        today_score=today_att.get("score") if today_att else None
+                    ))
+
+                # 3. Fetch today's quiz topic
+                q_res = client.table("daily_quizzes").select("topic").eq("class_id", class_id).eq("quiz_date", today_ist).execute()
+                if q_res.data:
+                    today_topic = q_res.data[0]["topic"]
+
+                return ClassDetailResponse(
+                    id=cls["id"],
+                    name=cls["name"],
+                    join_code=cls["join_code"],
+                    teacher_id=cls["teacher_id"],
+                    created_at=str(cls.get("created_at", "")),
+                    students=students_list,
+                    today_quiz_topic=today_topic,
+                    today_quiz_completed_count=completed_count
+                )
+        except Exception as e:
+            logger.warning(f"Error getting class details from Supabase: {e}")
+
+    # Fallback to local_db
     if not cls:
         raise HTTPException(status_code=404, detail="Class not found")
 
-    # Get enrolled students and whether they completed today's quiz
-    students_list = []
-    completed_count = 0
     members = [m for m in local_db.class_members if m["class_id"] == class_id]
-
     for m in members:
         uid = m["user_id"]
         profile = local_db.profiles.get(uid, {"display_name": f"Student {uid[:4]}"})
-        
-        # Check today's attempt
         today_att = next(
             (a for a in local_db.quiz_attempts 
              if a["class_id"] == class_id and a["user_id"] == uid and str(a.get("created_at", "")).startswith(today_ist)),
