@@ -2,7 +2,7 @@ import logging
 import random
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Response
 
@@ -13,6 +13,8 @@ from backend.app.models.schemas import (
     ClassDetailResponse,
     StudentMember,
     StudentQuizHistoryItem,
+    DailyActivityItem,
+    ClassAnnouncementRequest,
 )
 from backend.app.services.supabase_client import (
     get_supabase_client,
@@ -335,6 +337,47 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
                     if accuracy_sample_count > 0 else 0.0
                 )
 
+                # 5. Fetch class noticeboard announcement (stored with quiz_date = '1970-01-01')
+                announcement_text = None
+                announcement_time = None
+                try:
+                    ann_res = client.table("daily_quizzes").select("questions_json").eq("class_id", class_id).eq("quiz_date", "1970-01-01").execute()
+                    if ann_res.data and ann_res.data[0].get("questions_json"):
+                        ann_items = ann_res.data[0]["questions_json"]
+                        if isinstance(ann_items, list) and len(ann_items) > 0:
+                            announcement_text = ann_items[0].get("announcement")
+                            announcement_time = ann_items[0].get("updated_at")
+                except Exception:
+                    pass
+
+                # 6. Compute 14-day Activity Heatmap
+                total_enrolled = len(m_res.data or [])
+                today_date_obj = get_ist_today()
+                dates_map = {}
+                for i in range(13, -1, -1):
+                    d_str = str(today_date_obj - timedelta(days=i))
+                    dates_map[d_str] = set()
+
+                for a in all_attempts:
+                    d_str = str(a.get("created_at", ""))[:10]
+                    if d_str in dates_map:
+                        dates_map[d_str].add(a.get("user_id"))
+
+                heatmap_list = []
+                day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                for d_str, uids in dates_map.items():
+                    d_obj = datetime.strptime(d_str, "%Y-%m-%d")
+                    day_name = day_names[d_obj.weekday()]
+                    cnt = len(uids)
+                    pct = round((cnt / total_enrolled * 100), 1) if total_enrolled > 0 else 0.0
+                    heatmap_list.append(DailyActivityItem(
+                        date=d_str,
+                        day_name=day_name,
+                        completed_count=cnt,
+                        total_students=total_enrolled,
+                        percentage=pct
+                    ))
+
                 return ClassDetailResponse(
                     id=cls["id"],
                     name=cls["name"],
@@ -345,7 +388,10 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
                     today_quiz_topic=today_topic,
                     today_quiz_completed_count=completed_count,
                     today_quiz_questions=today_quiz_questions,
-                    average_accuracy=class_avg_acc
+                    average_accuracy=class_avg_acc,
+                    announcement=announcement_text,
+                    announcement_updated_at=announcement_time,
+                    activity_heatmap=heatmap_list
                 )
         except Exception as e:
             logger.warning(f"Error getting class details from Supabase: {e}")
@@ -396,6 +442,21 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
     today_topic = local_db.daily_quizzes.get(f"{class_id}_{today_ist}", {}).get("topic", "Water Cycle")
     local_quiz = local_db.daily_quizzes.get(f"{class_id}_{today_ist}", {})
     today_quiz_questions = local_quiz.get("questions_json", [])
+    local_ann = local_db.announcements.get(class_id, {})
+
+    total_enrolled = len(members)
+    today_date_obj = get_ist_today()
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    fallback_heatmap = [
+        DailyActivityItem(
+            date=str(today_date_obj - timedelta(days=i)),
+            day_name=day_names[(today_date_obj - timedelta(days=i)).weekday()],
+            completed_count=completed_count if i == 0 else 0,
+            total_students=total_enrolled,
+            percentage=round(completed_count / total_enrolled * 100, 1) if (i == 0 and total_enrolled > 0) else 0.0
+        )
+        for i in range(13, -1, -1)
+    ]
 
     return ClassDetailResponse(
         id=cls["id"],
@@ -407,8 +468,49 @@ def get_class_details(class_id: str, authorization: Optional[str] = Header(None)
         today_quiz_topic=today_topic,
         today_quiz_completed_count=completed_count,
         today_quiz_questions=today_quiz_questions,
-        average_accuracy=0.0
+        average_accuracy=0.0,
+        announcement=local_ann.get("announcement"),
+        announcement_updated_at=local_ann.get("updated_at"),
+        activity_heatmap=fallback_heatmap
     )
+
+@router.post("/{class_id}/announcement")
+def set_class_announcement(
+    class_id: str,
+    req: ClassAnnouncementRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Teacher posts or updates the class noticeboard announcement."""
+    client = get_supabase_client()
+    now_iso = datetime.utcnow().isoformat()
+    clean_text = req.announcement.strip()
+
+    if client:
+        try:
+            client.table("daily_quizzes").upsert({
+                "class_id": class_id,
+                "quiz_date": "1970-01-01",
+                "topic": "CLASS_ANNOUNCEMENT",
+                "questions_json": [{"announcement": clean_text, "updated_at": now_iso}]
+            }, on_conflict="class_id,quiz_date").execute()
+        except Exception as e:
+            logger.warning(f"Error saving announcement to Supabase: {e}")
+
+    local_db.announcements[class_id] = {"announcement": clean_text, "updated_at": now_iso}
+    return {"message": "Announcement posted successfully! 📢", "announcement": clean_text, "updated_at": now_iso}
+
+@router.delete("/{class_id}/announcement")
+def clear_class_announcement(class_id: str, authorization: Optional[str] = Header(None)):
+    """Teacher clears the class noticeboard announcement."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("daily_quizzes").delete().eq("class_id", class_id).eq("quiz_date", "1970-01-01").execute()
+        except Exception:
+            pass
+
+    local_db.announcements.pop(class_id, None)
+    return {"message": "Announcement cleared."}
 
 @router.get("/{class_id}/export-csv")
 def export_class_csv(class_id: str, authorization: Optional[str] = Header(None)):

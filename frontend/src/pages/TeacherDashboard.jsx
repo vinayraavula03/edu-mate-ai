@@ -7,6 +7,9 @@ import {
   regenerateJoinCode,
   removeStudentFromClass,
   setDailyQuizTopic,
+  setClassAnnouncement,
+  deleteClassAnnouncement,
+  createCustomDailyQuiz,
 } from '../api/client';
 import {
   Plus,
@@ -29,7 +32,47 @@ import {
   BookOpen,
   HelpCircle,
   Award,
+  Megaphone,
+  Calendar,
+  Edit3,
+  Trash2,
+  CheckSquare,
+  BarChart3,
+  Send,
 } from 'lucide-react';
+
+const INITIAL_CUSTOM_QUESTIONS = [
+  {
+    question: '',
+    options: ['', '', '', ''],
+    correct_index: 0,
+    explanation: '',
+  },
+  {
+    question: '',
+    options: ['', '', '', ''],
+    correct_index: 0,
+    explanation: '',
+  },
+  {
+    question: '',
+    options: ['', '', '', ''],
+    correct_index: 0,
+    explanation: '',
+  },
+  {
+    question: '',
+    options: ['', '', '', ''],
+    correct_index: 0,
+    explanation: '',
+  },
+  {
+    question: '',
+    options: ['', '', '', ''],
+    correct_index: 0,
+    explanation: '',
+  },
+];
 
 export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) {
   const { token, activeClass, setActiveClass } = useAuth();
@@ -42,6 +85,7 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
   // Modals & UI states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showQuizPreview, setShowQuizPreview] = useState(false);
+  const [showCustomQuizModal, setShowCustomQuizModal] = useState(false);
   const [selectedStudentForHistory, setSelectedStudentForHistory] = useState(null);
 
   // Form & search states
@@ -50,6 +94,15 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
   const [topicLoading, setTopicLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [msg, setMsg] = useState('');
+
+  // Noticeboard states
+  const [announcementText, setAnnouncementText] = useState('');
+  const [announcementLoading, setAnnouncementLoading] = useState(false);
+
+  // Custom Quiz Builder states
+  const [builderTopic, setBuilderTopic] = useState('');
+  const [builderQuestions, setBuilderQuestions] = useState(INITIAL_CUSTOM_QUESTIONS);
+  const [builderLoading, setBuilderLoading] = useState(false);
 
   // Filtering & sorting states
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,6 +137,11 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
     try {
       const details = await fetchClassDetails(classId, token);
       setClassDetails(details);
+      if (details?.announcement) {
+        setAnnouncementText(details.announcement);
+      } else {
+        setAnnouncementText('');
+      }
     } catch (err) {
       console.warn('Class details error:', err);
     }
@@ -142,6 +200,104 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
       alert('Failed to set topic.');
     } finally {
       setTopicLoading(false);
+    }
+  }
+
+  // Noticeboard Handlers
+  async function handleSaveAnnouncement(e) {
+    e.preventDefault();
+    if (!currentClass || !announcementText.trim()) return;
+
+    setAnnouncementLoading(true);
+    try {
+      const res = await setClassAnnouncement(currentClass.id, announcementText.trim(), token);
+      setMsg(res.message || 'Announcement posted to class noticeboard!');
+      loadDetails(currentClass.id);
+    } catch (err) {
+      alert(err.message || 'Failed to post announcement');
+    } finally {
+      setAnnouncementLoading(false);
+    }
+  }
+
+  async function handleClearAnnouncement() {
+    if (!currentClass) return;
+    if (!confirm('Are you sure you want to clear this announcement from students\' dashboards?')) return;
+
+    try {
+      await deleteClassAnnouncement(currentClass.id, token);
+      setAnnouncementText('');
+      setMsg('Noticeboard announcement cleared.');
+      loadDetails(currentClass.id);
+    } catch {
+      alert('Failed to clear announcement.');
+    }
+  }
+
+  // Custom Quiz Builder Handlers
+  function updateBuilderQuestion(qIndex, field, value) {
+    setBuilderQuestions((prev) => {
+      const copy = [...prev];
+      copy[qIndex] = { ...copy[qIndex], [field]: value };
+      return copy;
+    });
+  }
+
+  function updateBuilderOption(qIndex, optIndex, value) {
+    setBuilderQuestions((prev) => {
+      const copy = [...prev];
+      const newOpts = [...copy[qIndex].options];
+      newOpts[optIndex] = value;
+      copy[qIndex] = { ...copy[qIndex], options: newOpts };
+      return copy;
+    });
+  }
+
+  async function handlePublishCustomQuiz(e) {
+    e.preventDefault();
+    if (!currentClass) return;
+
+    if (!builderTopic.trim()) {
+      alert('Please enter a Quiz Topic.');
+      return;
+    }
+
+    // Validation
+    for (let i = 0; i < builderQuestions.length; i++) {
+      const q = builderQuestions[i];
+      if (!q.question.trim()) {
+        alert(`Question #${i + 1} text is required.`);
+        return;
+      }
+      for (let j = 0; j < 4; j++) {
+        if (!q.options[j].trim()) {
+          alert(`Question #${i + 1}, Option ${String.fromCharCode(65 + j)} is empty.`);
+          return;
+        }
+      }
+      if (!q.explanation.trim()) {
+        alert(`Question #${i + 1} needs an explanation for students.`);
+        return;
+      }
+    }
+
+    setBuilderLoading(true);
+    try {
+      const res = await createCustomDailyQuiz(
+        currentClass.id,
+        builderTopic.trim(),
+        builderQuestions,
+        token
+      );
+      setMsg(res.message || 'Custom class quiz published!');
+      setShowCustomQuizModal(false);
+      setBuilderTopic('');
+      setBuilderQuestions(INITIAL_CUSTOM_QUESTIONS);
+      loadDetails(currentClass.id);
+    } catch (err) {
+      alert(err.message || 'Failed to publish custom quiz');
+    } finally {
+      setBuilderLoading(false);
     }
   }
 
@@ -240,7 +396,7 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
             Teacher Class Management
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage classes, inspect student performance analytics, preview daily quizzes, and track mastery.
+            Manage classes, post noticeboard announcements, track attendance heatmap, build custom quizzes, and view analytics.
           </p>
         </div>
 
@@ -389,12 +545,137 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
             </div>
           </div>
 
-          {/* Daily Quiz Topic Controller & Preview */}
+          {/* FEATURE 1: Class Noticeboard & Announcements Card */}
+          <div className="bg-gradient-to-br from-amber-50/70 via-white to-amber-50/40 p-6 rounded-3xl border border-amber-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500 text-white rounded-2xl shadow-xs">
+                  <Megaphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Class Noticeboard & Study Reminders
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Announcements appear prominently on enrolled students' dashboards.
+                  </p>
+                </div>
+              </div>
+
+              {classDetails?.announcement && (
+                <button
+                  type="button"
+                  onClick={handleClearAnnouncement}
+                  className="px-3 py-1.5 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Notice</span>
+                </button>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveAnnouncement} className="space-y-3">
+              <textarea
+                rows={2}
+                maxLength={500}
+                value={announcementText}
+                onChange={(e) => setAnnouncementText(e.target.value)}
+                placeholder="e.g. 📢 Reminder: Tomorrow's daily quiz will be on Photosynthesis! Revise Chapter 4 notes tonight."
+                className="w-full text-xs font-semibold p-3.5 border border-slate-200 rounded-2xl bg-white focus:border-amber-500 focus:outline-hidden"
+              />
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {announcementText.length}/500 characters
+                </span>
+
+                <button
+                  type="submit"
+                  disabled={announcementLoading || !announcementText.trim()}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{announcementLoading ? 'Posting...' : 'Post Announcement 📢'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* FEATURE 2: Attendance & Activity Heatmap (Last 14 Days) */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl border border-blue-200/80">
+                  <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Attendance & Daily Quiz Participation
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Visual tracking of unique students submitting daily quizzes over the last 14 days.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                  <span className="w-3 h-3 rounded-md bg-emerald-600 inline-block"></span> 100%
+                </span>
+                <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                  <span className="w-3 h-3 rounded-md bg-emerald-400 inline-block"></span> &gt;50%
+                </span>
+                <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                  <span className="w-3 h-3 rounded-md bg-amber-300 inline-block"></span> &gt;0%
+                </span>
+                <span className="flex items-center gap-1.5 font-bold text-slate-400">
+                  <span className="w-3 h-3 rounded-md bg-slate-100 border border-slate-200 inline-block"></span> 0%
+                </span>
+              </div>
+            </div>
+
+            {/* Heatmap Grid */}
+            <div className="grid grid-cols-7 sm:grid-cols-14 gap-2 pt-2">
+              {classDetails?.activity_heatmap?.map((d, idx) => {
+                const isToday = idx === (classDetails.activity_heatmap.length - 1);
+                const bgClass =
+                  d.percentage >= 100
+                    ? 'bg-emerald-600 text-white'
+                    : d.percentage >= 50
+                    ? 'bg-emerald-400 text-white'
+                    : d.percentage > 0
+                    ? 'bg-amber-300 text-amber-900 font-bold'
+                    : 'bg-slate-50 border border-slate-200 text-slate-400';
+
+                return (
+                  <div
+                    key={d.date}
+                    className={`p-3 rounded-2xl flex flex-col items-center justify-between space-y-2 transition-all hover:scale-105 shadow-2xs ${
+                      isToday ? 'ring-2 ring-green-600 ring-offset-2' : ''
+                    } ${bgClass}`}
+                    title={`${d.date} (${d.day_name}): ${d.completed_count} of ${d.total_students} completed (${d.percentage}%)`}
+                  >
+                    <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">
+                      {d.day_name}
+                    </span>
+                    <span className="text-base font-extrabold">
+                      {d.completed_count}
+                    </span>
+                    <span className="text-[10px] font-semibold opacity-85">
+                      {d.date.slice(5)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Daily Quiz Topic Controller & Custom Quiz Builder */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  Daily Quiz Topic Controller
+                  Daily Quiz Topic & Custom Quiz Builder
                 </h3>
                 <p className="text-xs text-slate-500">
                   Current topic for today:{' '}
@@ -416,6 +697,16 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
                   </button>
                 )}
 
+                {/* FEATURE 3: Custom Quiz Builder Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowCustomQuizModal(true)}
+                  className="px-3.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 border border-purple-200 cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Custom Quiz Builder ✍️</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => handleSetTopic('Photosynthesis and Plant Cells')}
@@ -433,7 +724,7 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
                 type="text"
                 value={customTopic}
                 onChange={(e) => setCustomTopic(e.target.value)}
-                placeholder="Enter custom topic: e.g. Solar System, Fractions, World War II..."
+                placeholder="Enter AI topic: e.g. Solar System, Fractions, World War II..."
                 className="flex-1 text-xs font-semibold py-2.5 px-3.5 border border-slate-200 rounded-xl focus:border-green-500 focus:outline-hidden"
               />
               <button
@@ -441,7 +732,7 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
                 disabled={topicLoading || !customTopic.trim()}
                 className="py-2.5 px-5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
               >
-                {topicLoading ? 'Generating Quiz...' : 'Set Quiz Topic 🎯'}
+                {topicLoading ? 'Generating Quiz...' : 'Set AI Quiz Topic 🎯'}
               </button>
             </div>
           </div>
@@ -664,6 +955,146 @@ export default function TeacherDashboard({ onGoToInsights, onGoToLeaderboard }) 
             )}
           </div>
         </>
+      )}
+
+      {/* FEATURE 2: Custom Quiz Builder Modal */}
+      {showCustomQuizModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] shadow-2xl border border-slate-100 p-6 flex flex-col space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md">
+                  Teacher Authoring Tool
+                </span>
+                <h3 className="text-xl font-extrabold text-slate-900 mt-1">
+                  Custom Daily Quiz Builder ✍️
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Write 5 custom questions, 4 choices each, pick the correct answers, and publish directly to your class.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowCustomQuizModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePublishCustomQuiz} className="overflow-y-auto space-y-6 pr-2 flex-1">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Quiz Topic Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={builderTopic}
+                  onChange={(e) => setBuilderTopic(e.target.value)}
+                  placeholder="e.g. Chemical Bonding, Fractions & Decimals, Cell Structure"
+                  className="w-full text-xs font-semibold py-2.5 px-3.5 border border-slate-200 rounded-xl focus:border-purple-500 focus:outline-hidden"
+                />
+              </div>
+
+              {builderQuestions.map((q, qIdx) => (
+                <div key={qIdx} className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 font-bold text-xs text-purple-800 bg-purple-100/70 px-2.5 py-0.5 rounded-lg">
+                      <span>Question #{qIdx + 1}</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Select the radio button next to the correct answer choice
+                    </span>
+                  </div>
+
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      value={q.question}
+                      onChange={(e) => updateBuilderQuestion(qIdx, 'question', e.target.value)}
+                      placeholder={`Enter question #${qIdx + 1} prompt...`}
+                      className="w-full text-xs font-semibold p-3 bg-white border border-slate-200 rounded-xl focus:border-purple-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  {/* 4 Options */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {[0, 1, 2, 3].map((optIdx) => {
+                      const letter = String.fromCharCode(65 + optIdx);
+                      const isSelectedCorrect = q.correct_index === optIdx;
+
+                      return (
+                        <div
+                          key={optIdx}
+                          className={`p-2.5 rounded-xl border flex items-center gap-2.5 transition-all ${
+                            isSelectedCorrect
+                              ? 'bg-emerald-50 border-emerald-400 ring-1 ring-emerald-300'
+                              : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={`correct_choice_${qIdx}`}
+                            checked={isSelectedCorrect}
+                            onChange={() => updateBuilderQuestion(qIdx, 'correct_index', optIdx)}
+                            className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            id={`q_${qIdx}_opt_${optIdx}`}
+                          />
+                          <label
+                            htmlFor={`q_${qIdx}_opt_${optIdx}`}
+                            className="font-bold text-xs text-slate-500 shrink-0 cursor-pointer"
+                          >
+                            {letter}:
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={q.options[optIdx]}
+                            onChange={(e) => updateBuilderOption(qIdx, optIdx, e.target.value)}
+                            placeholder={`Option ${letter}`}
+                            className="flex-1 text-xs font-medium bg-transparent border-0 focus:outline-hidden"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Explanation */}
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      value={q.explanation}
+                      onChange={(e) => updateBuilderQuestion(qIdx, 'explanation', e.target.value)}
+                      placeholder="Why is this answer correct? (Explanation shown to students after submitting)"
+                      className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl focus:border-purple-500 focus:outline-hidden text-slate-600"
+                    />
+                  </div>
+                </div>
+              ))}
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomQuizModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={builderLoading}
+                  className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span>{builderLoading ? 'Publishing...' : 'Publish Custom Quiz 🚀'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Daily Quiz Preview Modal */}

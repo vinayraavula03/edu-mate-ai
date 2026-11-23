@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { fetchUserProfile, fetchTodayQuiz } from '../api/client';
+import { fetchUserProfile, fetchTodayQuiz, fetchClassDetails } from '../api/client';
 import {
   Flame,
   Star,
@@ -13,12 +13,14 @@ import {
   AlertCircle,
   School,
   Clock,
+  Megaphone,
 } from 'lucide-react';
 
 export default function StudentDashboard({ onNavigate, onOpenJoinModal }) {
   const { token, activeClass, displayName } = useAuth();
   const [profile, setProfile] = useState(null);
   const [todayQuiz, setTodayQuiz] = useState(null);
+  const [classNotice, setClassNotice] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,8 +31,17 @@ export default function StudentDashboard({ onNavigate, onOpenJoinModal }) {
         setProfile(p);
 
         if (activeClass?.id) {
-          const q = await fetchTodayQuiz(activeClass.id, token);
+          const [q, cDetails] = await Promise.all([
+            fetchTodayQuiz(activeClass.id, token).catch(() => null),
+            fetchClassDetails(activeClass.id, token).catch(() => null),
+          ]);
           setTodayQuiz(q);
+          if (cDetails?.announcement) {
+            setClassNotice({
+              text: cDetails.announcement,
+              updatedAt: cDetails.announcement_updated_at,
+            });
+          }
         }
       } catch (err) {
         console.warn('Dashboard load error:', err);
@@ -50,6 +61,30 @@ export default function StudentDashboard({ onNavigate, onOpenJoinModal }) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Teacher Noticeboard Banner */}
+      {classNotice?.text && (
+        <div className="bg-gradient-to-r from-amber-500/10 via-amber-50 to-orange-50 border-2 border-amber-300/80 rounded-3xl p-5 shadow-xs flex items-start gap-4">
+          <div className="p-2.5 bg-amber-500 text-white rounded-2xl shadow-sm shrink-0 mt-0.5">
+            <Megaphone className="w-5 h-5" />
+          </div>
+          <div className="flex-1 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-md">
+                Class Noticeboard • {activeClass?.name}
+              </span>
+              {classNotice.updatedAt && (
+                <span className="text-[10px] text-amber-700/70 font-semibold">
+                  {new Date(classNotice.updatedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                </span>
+              )}
+            </div>
+            <p className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed pt-0.5">
+              {classNotice.text}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-emerald-600 to-green-600 rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-green-600/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div>

@@ -113,6 +113,36 @@ export async function setDailyQuizTopic(classId, topic, token) {
   return res.json();
 }
 
+export async function createCustomDailyQuiz(classId, topic, questions, token) {
+  const res = await fetch(`${API_BASE}/quiz/custom-daily`, {
+    method: 'POST',
+    headers: getHeaders(token),
+    body: JSON.stringify({ class_id: classId, topic, questions }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || 'Failed to publish custom quiz');
+  return data;
+}
+
+export async function setClassAnnouncement(classId, announcement, token) {
+  const res = await fetch(`${API_BASE}/classes/${classId}/announcement`, {
+    method: 'POST',
+    headers: getHeaders(token),
+    body: JSON.stringify({ announcement }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || 'Failed to post announcement');
+  return data;
+}
+
+export async function deleteClassAnnouncement(classId, token) {
+  const res = await fetch(`${API_BASE}/classes/${classId}/announcement`, {
+    method: 'DELETE',
+    headers: getHeaders(token),
+  });
+  return res.json();
+}
+
 export async function fetchLeaderboard(classId, range = 'daily', token) {
   const res = await fetch(`${API_BASE}/leaderboard?class_id=${classId}&range=${range}`, {
     headers: getHeaders(token),

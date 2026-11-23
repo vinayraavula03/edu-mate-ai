@@ -8,6 +8,7 @@ from backend.app.models.schemas import (
     QuizSubmissionRequest,
     QuizSubmissionResult,
     PracticeQuizRequest,
+    CustomQuizRequest,
 )
 from backend.app.services.gemini_service import generate_quiz_with_ai
 from backend.app.services.quiz_service import (
@@ -277,4 +278,41 @@ def set_daily_quiz_topic(
         "message": f"Daily quiz set for topic '{ai_quiz.topic}'! 🚀",
         "quiz_id": quiz_data["id"],
         "topic": ai_quiz.topic
+    }
+
+@router.post("/custom-daily")
+def create_custom_daily_quiz(
+    req: CustomQuizRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Teacher creates or overrides today's daily quiz with custom questions and answers.
+    """
+    user = get_current_user(authorization)
+    today_str = str(get_ist_today())
+
+    quiz_data = {
+        "id": str(uuid.uuid4()),
+        "class_id": req.class_id,
+        "quiz_date": today_str,
+        "topic": req.topic.strip(),
+        "questions_json": [q.model_dump() for q in req.questions],
+        "created_by": user["id"],
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("daily_quizzes").upsert(quiz_data, on_conflict="class_id,quiz_date").execute()
+        except Exception:
+            pass
+
+    local_db.daily_quizzes[f"{req.class_id}_{today_str}"] = quiz_data
+
+    return {
+        "message": f"Custom daily quiz for '{req.topic}' published successfully! 🚀",
+        "quiz_id": quiz_data["id"],
+        "topic": req.topic,
+        "question_count": len(req.questions)
     }

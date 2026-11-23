@@ -109,5 +109,6 @@ class LocalMockDB:
         self.daily_quizzes: Dict[str, Dict[str, Any]] = {}
         self.quiz_attempts: List[Dict[str, Any]] = []
         self.explanations: List[Dict[str, Any]] = []
+        self.announcements: Dict[str, Dict[str, Any]] = {}
 
 local_db = LocalMockDB()

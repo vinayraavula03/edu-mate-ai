@@ -99,6 +99,21 @@ class StudentMember(BaseModel):
     quizzes_completed: int = 0
     history: List[StudentQuizHistoryItem] = []
 
+class DailyActivityItem(BaseModel):
+    date: str
+    day_name: str
+    completed_count: int
+    total_students: int
+    percentage: float
+
+class ClassAnnouncementRequest(BaseModel):
+    announcement: str = Field(..., max_length=500)
+
+class CustomQuizRequest(BaseModel):
+    class_id: str
+    topic: str = Field(..., min_length=2, max_length=100)
+    questions: List[QuizQuestion] = Field(..., min_length=1, max_length=10)
+
 class ClassDetailResponse(BaseModel):
     id: str
     name: str
@@ -110,6 +125,9 @@ class ClassDetailResponse(BaseModel):
     today_quiz_completed_count: int = 0
     today_quiz_questions: List[Dict[str, Any]] = []
     average_accuracy: float = 0.0
+    announcement: Optional[str] = None
+    announcement_updated_at: Optional[str] = None
+    activity_heatmap: List[DailyActivityItem] = []
 
 # --- Leaderboard Schemas ---
 
